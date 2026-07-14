@@ -8,7 +8,13 @@ matches, train between rounds, manage your energy, cash, and your
 relationships with the coach, teammates, and fans across a full 27-round
 NRL season with a live 17-team ladder.
 
-## Run
+## Play in the browser
+
+Open `index.html` in any browser — the entire game (all mini-games, the full
+27-round season, and the management loop) is ported to a single dependency-free
+HTML file with a CRT-terminal look. Keyboard required.
+
+## Run in the terminal
 
 ```bash
 python3 main.py                      # full career game

@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NRL Career Simulator</title>
+<style>
+  :root{
+    --ground:#070b10; --bezel:#0d141c; --text:#c8d2dc;
+    --title:#5fd7d7; --good:#4ec96a; --bad:#ff5f5f; --warn:#e0a83c;
+    --accent:#d98fe8; --dim:#5d6a78;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--ground);display:flex;align-items:center;justify-content:center;
+       font-family:ui-monospace,"Cascadia Mono","JetBrains Mono",Menlo,Consolas,monospace;}
+  .crt{position:relative;background:var(--bezel);border-radius:14px;padding:16px 20px;
+       box-shadow:0 0 70px rgba(95,215,215,.08), inset 0 0 46px rgba(0,0,0,.65);}
+  .crt::after{content:"";position:absolute;inset:0;border-radius:14px;pointer-events:none;
+       background:repeating-linear-gradient(0deg,rgba(0,0,0,.15) 0 1px,transparent 1px 3px);}
+  pre#screen{margin:0;font-family:inherit;font-size:clamp(6px,1.02vw,15px);line-height:1.18;
+       color:var(--text);text-shadow:0 0 6px rgba(200,210,220,.14);}
+  .title{color:var(--title)} .good{color:var(--good)} .bad{color:var(--bad)}
+  .warn{color:var(--warn)} .accent{color:var(--accent)} .dim{color:var(--dim)}
+  .bold{font-weight:700}
+  .rev{background:var(--text);color:var(--ground);text-shadow:none}
+  .rev.good{background:var(--good)} .rev.bad{background:var(--bad)}
+  .rev.warn{background:var(--warn)} .rev.accent{background:var(--accent)}
+  .rev.title{background:var(--title)}
+  .blink{animation:blink .7s steps(2) infinite}
+  @keyframes blink{50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){.blink{animation:none}}
+</style>
+</head>
+<body>
+<div class="crt"><pre id="screen"></pre></div>
+<script>
+"use strict";
+/* ================= character-grid screen ================= */
+const W=100,H=34;
+const el=document.getElementById("screen");
+let buf;
+function esc(c){return c==="&"?"&amp;":c==="<"?"&lt;":c===">"?"&gt;":c;}
+function clear(){buf=Array.from({length:H},()=>Array.from({length:W},()=>({ch:" ",cls:""})));}
+function put(y,x,text,cls=""){
+  y=Math.round(y);x=Math.round(x);
+  if(y<0||y>=H)return;
+  for(let i=0;i<text.length;i++){const xx=x+i;if(xx<0||xx>=W)continue;buf[y][xx]={ch:text[i],cls};}
+}
+function center(y,text,cls=""){put(y,Math.max(0,Math.floor((W-text.length)/2)),text,cls);}
+function box(y,x,h,w,title=""){
+  put(y,x,"┌"+"─".repeat(w-2)+"┐","dim");
+  for(let r=y+1;r<y+h-1;r++){put(r,x,"│","dim");put(r,x+w-1,"│","dim");}
+  put(y+h-1,x,"└"+"─".repeat(w-2)+"┘","dim");
+  if(title)put(y,x+2," "+title+" ","title bold");
+}
+function statColor(v){return v>=70?"good":v>=40?"warn":"bad";}
+function meter(y,x,width,value,label=""){
+  if(label){put(y,x,label.padEnd(10));x+=10;}
+  const filled=Math.round(width*value/100);
+  put(y,x,"[");
+  put(y,x+1,"█".repeat(filled),statColor(value));
+  put(y,x+1+filled,"░".repeat(width-filled),"dim");
+  put(y,x+1+width,"] "+String(Math.round(value)).padStart(3));
+}
+function wrapSpan(t,cls){return cls?'<span class="'+cls+'">'+t+"</span>":t;}
+function render(){
+  let html="";
+  for(const row of buf){
+    let cur=null,run="";
+    for(const c of row){
+      if(c.cls!==cur){if(run)html+=wrapSpan(run,cur);cur=c.cls;run="";}
+      run+=esc(c.ch);
+    }
+    html+=wrapSpan(run,cur)+"\n";
+  }
+  el.innerHTML=html;
+}
+/* ================= input & timing ================= */
+let keyBuf=[],waiters=[];
+document.addEventListener("keydown",e=>{
+  const k=e.key;
+  if([" ","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Enter"].includes(k))e.preventDefault();
+  if(e.metaKey||e.ctrlKey||e.altKey)return;
+  if(waiters.length)waiters.shift()(k);
+  else if(keyBuf.length<32)keyBuf.push(k);
+});
+function waitKey(){keyBuf.length=0;return new Promise(res=>waiters.push(res));}
+function sleep(ms){return new Promise(res=>setTimeout(res,ms));}
+function frameLoop(step){
+  keyBuf.length=0;
+  return new Promise(res=>{
+    let last=performance.now();
+    function f(now){
+      const dt=Math.min(.1,(now-last)/1000);last=now;
+      const keys=keyBuf.splice(0);
+      if(step(dt,keys)){res();return;}
+      requestAnimationFrame(f);
+    }
+    requestAnimationFrame(f);
+  });
+}
+async function flash(text,cls="",ms=1200){center(H>>1,"  "+text+"  ",cls+" rev");render();await sleep(ms);}
+/* ================= rng ================= */
+const rand=Math.random;
+function randint(a,b){return a+Math.floor(rand()*(b-a+1));}
+function gauss(mu,sigma){const u=1-rand(),v=rand();return mu+sigma*Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function choice(arr){return arr[Math.floor(rand()*arr.length)];}
+function weighted(items,weights){
+  let t=weights.reduce((a,b)=>a+b,0),r=rand()*t;
+  for(let i=0;i<items.length;i++){r-=weights[i];if(r<0)return items[i];}
+  return items[items.length-1];
+}
+function sampleMinutes(lo,hi,n){const s=new Set();while(s.size<n)s.add(randint(lo,hi));return[...s].sort((a,b)=>a-b);}
+class Osc{
+  constructor(lo,hi,speed,start=null){this.lo=lo;this.hi=hi;this.speed=speed;this.value=start===null?lo:start;this.dir=1;}
+  adv(dt){
+    this.value+=this.dir*this.speed*dt;
+    while(this.value>this.hi||this.value<this.lo){
+      if(this.value>this.hi){this.value=2*this.hi-this.value;this.dir=-1;}
+      else{this.value=2*this.lo-this.value;this.dir=1;}
+    }
+    return this.value;
+  }
+}
+/* ================= game data ================= */
+const TEAMS=[["Brisbane Broncos","BRI"],["Canberra Raiders","CBR"],["Canterbury Bulldogs","CBY"],
+["Cronulla Sharks","CRO"],["Dolphins","DOL"],["Gold Coast Titans","GLD"],["Manly Sea Eagles","MAN"],
+["Melbourne Storm","MEL"],["Newcastle Knights","NEW"],["New Zealand Warriors","NZW"],
+["North Queensland Cowboys","NQL"],["Parramatta Eels","PAR"],["Penrith Panthers","PEN"],
+["South Sydney Rabbitohs","SOU"],["St George Illawarra Dragons","SGI"],["Sydney Roosters","SYD"],
+["Wests Tigers","WST"]];
+const ROUNDS=27,BYE=-1;
+const SURNAMES=["Cleary","Tedesco","Munster","Ponga","Hughes","Grant","Cobbo","Walsh","Mitchell",
+"Crichton","Yeo","Fifita","Tuilagi","Katoa","Brimson","Haas","Carrigan","Moses","Luai","Hammer"];
+const FLAVOUR=[
+"{p} kicks deep into the corner...",
+"{p} breaks the line down the short side!",
+"Big hit from {p} in midfield!",
+"{p} takes the high ball under pressure.",
+"Scrum feed to {t}, {p} at first receiver...",
+"{p} chances an offload... it sticks!",
+"Error! {t} cough it up in good field position.",
+"{p} makes 40 metres on the kick return!",
+"Penalty against {t} for holding down.",
+"{p} grubbers in behind... just too heavy."];
+const SHOP=[["Energy Drink",50,"Restore 25% energy","energy",25],
+["Sports Massage",120,"Restore 60% energy","energy",60],
+["Speed Boots",400,"+3 Speed","speed",3],
+["Gym Membership",400,"+3 Strength","strength",3],
+["Kicking Tee",350,"+3 Kicking","kicking",3],
+["Grip Gloves",350,"+3 Passing","passing",3],
+["Tackle Pads",350,"+3 Tackle","tackle",3]];
+const REL_ACTIONS=[["Extra video session with the coach","coach",8,10,0],
+["Team barbecue at your place","teammates",8,5,100],
+["Fan signing session","fans",8,10,0]];
+const STAT_KEYS=["speed","strength","passing","kicking","tackle"];
+const REL_KEYS=["coach","teammates","fans"];
+const capital=s=>s[0].toUpperCase()+s.slice(1);
+/* ================= state ================= */
+let state=null;
+function newGame(name){
+  const teams=TEAMS.map(([n,a])=>({name:n,abbrev:a,strength:randint(35,75),
+    played:0,won:0,drawn:0,lost:0,pf:0,pa:0,pts:0}));
+  const idx=Math.floor(rand()*teams.length);
+  return{
+    player:{name,speed:40,strength:40,passing:40,kicking:40,tackle:40,
+      energy:100,cash:500,coach:60,teammates:60,fans:50,seasonTries:0,seasonGoals:0,careerYear:1},
+    teamIdx:idx,contract:{club:teams[idx].name,wage:300,seasonsLeft:2},
+    teams,roundNo:1,seasonNo:1};
+}
+const myTeam=()=>state.teams[state.teamIdx];
+function adjust(o,k,d){o[k]=Math.max(0,Math.min(100,Math.round(o[k]+d)));}
+const overall=p=>Math.round(STAT_KEYS.reduce((a,k)=>a+p[k],0)/STAT_KEYS.length);
+const benched=p=>p.coach<25;
+const effective=(stat,energy)=>Math.round(stat*(0.5+0.5*energy/100));
+function recordResult(t,f,a){
+  t.played++;t.pf+=f;t.pa+=a;
+  if(f>a){t.won++;t.pts+=2;}else if(f===a){t.drawn++;t.pts+=1;}else t.lost++;
+}
+function sortLadder(ts){return[...ts].sort((a,b)=>b.pts-a.pts||(b.pf-b.pa)-(a.pf-a.pa)||b.pf-a.pf);}
+/* ================= fixtures & AI ================= */
+function genFixtures(numTeams,rounds){
+  const ids=[...Array(numTeams).keys()];
+  if(numTeams%2)ids.push(BYE);
+  const n=ids.length,base=[];
+  let order=ids.slice();
+  for(let r=0;r<n-1;r++){
+    const pairs=[];
+    for(let i=0;i<n/2;i++)pairs.push([order[i],order[n-1-i]]);
+    base.push(pairs);
+    order=[order[0],order[n-1],...order.slice(1,-1)];
+  }
+  const fixtures=[];
+  for(let r=0;r<rounds;r++){
+    let pairs=base[r%base.length];
+    if(Math.floor(r/base.length)%2===1)pairs=pairs.map(([a,b])=>[b,a]);
+    fixtures.push(pairs.map(([a,b])=>a===BYE?[b,a]:[a,b]));
+  }
+  return fixtures;
+}
+function opponentFor(fixtures,roundNo,teamIdx){
+  for(const[a,b]of fixtures[roundNo-1]){if(a===teamIdx)return b;if(b===teamIdx)return a;}
+  return null;
+}
+function aiScore(atk,dfn){
+  const edge=(atk.strength-dfn.strength)/100;
+  const tries=Math.max(0,Math.round(gauss(3+2.5*edge,1.3)));
+  let conv=0;for(let i=0;i<tries;i++)if(rand()<0.72)conv++;
+  return tries*4+conv*2+choice([0,0,0,1,1,2])*2;
+}
+function simulateOtherMatches(fixtures){
+  for(const[a,b]of fixtures[state.roundNo-1]){
+    if(a===state.teamIdx||b===state.teamIdx)continue;
+    if(b===BYE){state.teams[a].pts+=2;continue;}
+    const ta=state.teams[a],tb=state.teams[b];
+    const sa=aiScore(ta,tb),sb=aiScore(tb,ta);
+    recordResult(ta,sa,sb);recordResult(tb,sb,sa);
+  }
+}
+/* ================= kick mini-game ================= */
+const POWER_CENTER=75,ANGLE_CENTER=0;
+const sweetWidth=k=>6+k*0.10;
+function judgeKick(power,angle,kstat){
+  const w=sweetWidth(kstat);
+  const success=Math.abs(power-POWER_CENTER)<=w&&Math.abs(angle-ANGLE_CENTER)<=w;
+  const quality=success&&Math.abs(power-POWER_CENTER)<4&&Math.abs(angle)<4?"perfect":success?"good":"miss";
+  return{power,angle,success,quality};
+}
+function drawPowerBar(value,kstat,label){
+  clear();
+  const barH=20,top=4,cx=W>>1;
+  center(1,label,"accent bold");
+  center(2,"POWER — press [SPACE] to lock!","title bold");
+  const w=sweetWidth(kstat);
+  for(let i=0;i<barH;i++){
+    const level=100*(barH-1-i)/(barH-1);
+    const cls=Math.abs(level-POWER_CENTER)<=w?"good bold":"dim";
+    put(top+i,cx-3,"│"+(level<=value?"▓▓▓▓":"    ")+"│",cls);
+    if(Math.abs(level-value)<100/barH/2)put(top+i,cx+4,"◀ "+String(Math.round(value)).padStart(3),"warn bold");
+  }
+  put(top+barH,cx-3,"└────┘","dim");
+  render();
+}
+function drawAngleBar(value,power,kstat,label){
+  clear();
+  const barW=50,y=H>>1,left=(W-barW)>>1;
+  center(1,label,"accent bold");
+  center(2,"WIND / ANGLE — press [SPACE] at the centre!","title bold");
+  center(4,"Power locked: "+Math.round(power),"dim");
+  const w=sweetWidth(kstat);
+  for(let i=0;i<barW;i++){
+    const ang=-50+100*i/(barW-1);
+    if(Math.abs(ang-ANGLE_CENTER)<=w)put(y,left+i,"▒","good bold");
+    else put(y,left+i,"─","dim");
+  }
+  put(y-1,left+Math.round((value+50)/100*(barW-1)),"▼","warn bold");
+  put(y+1,left,"◀ hook","dim");
+  put(y+1,left+barW-7,"slice ▶","dim");
+  render();
+}
+async function playKick(kstat,label){
+  const p=new Osc(0,100,140);
+  await frameLoop((dt,keys)=>{p.adv(dt);drawPowerBar(p.value,kstat,label);return keys.includes(" ");});
+  const a=new Osc(-50,50,110,-50);
+  await frameLoop((dt,keys)=>{a.adv(dt);drawAngleBar(a.value,p.value,kstat,label);return keys.includes(" ");});
+  const r=judgeKick(p.value,a.value,kstat);
+  const v={perfect:["PERFECT STRIKE! Right through the middle!","good bold"],
+    good:["It's good! The kick sails over!","good bold"],
+    miss:["Missed! It drifts wide...","bad bold"]}[r.quality];
+  await flash(v[0],v[1]);
+  return r;
+}
+/* ================= pass mini-game ================= */
+const PF_W=60,PF_H=16,MAX_ANGLE=50,DEF_REACH=1.4;
+const catchRadius=p=>1.0+p*0.015;
+function makeSetup(){return{py:PF_H>>1,px:3,dy:randint(3,PF_H-4),dx:PF_W>>1,wy:randint(2,PF_H-3),wx:PF_W-5};}
+const trajY=(s,angle,x)=>s.py-Math.tan(angle*Math.PI/180)*(x-s.px);
+function judgePass(s,angle,pstat){
+  if(Math.abs(trajY(s,angle,s.dx)-s.dy)<=DEF_REACH)return"intercepted";
+  return Math.abs(trajY(s,angle,s.wx)-s.wy)<=catchRadius(pstat)?"complete":"wasted";
+}
+function drawField(s,angle,wingerDir,ballX=null){
+  clear();
+  const top=3,left=(W-PF_W-2)>>1;
+  center(1,"PLAYMAKER PASS — [SPACE] to release!","title bold");
+  box(top,left,PF_H+2,PF_W+2);
+  const P=(y,x,ch,cls)=>put(top+1+Math.round(y),left+1+Math.round(x),ch,cls);
+  P(s.py,s.px,"@","good bold");
+  P(s.dy,s.dx,"X","bad bold");
+  P(s.wy,s.wx,"O","accent bold");
+  P(s.wy,s.wx+1,wingerDir<0?"↑":"↓","dim");
+  const endX=ballX===null?s.px+8:Math.min(PF_W-1,ballX);
+  for(let x=s.px+1;x<endX;x++){
+    const y=trajY(s,angle,x);
+    if(y>=0&&y<PF_H)P(y,x,ballX===null?"·":"o",ballX===null?"warn":"warn bold");
+  }
+  render();
+}
+async function playPass(pstat){
+  const s=makeSetup();
+  const aosc=new Osc(-MAX_ANGLE,MAX_ANGLE,95,0);
+  const wosc=new Osc(2,PF_H-3,6,s.wy);
+  await frameLoop((dt,keys)=>{
+    aosc.adv(dt);s.wy=Math.round(wosc.adv(dt));
+    drawField(s,aosc.value,wosc.dir);
+    return keys.includes(" ");
+  });
+  const quality=judgePass(s,aosc.value,pstat);
+  for(let bx=s.px+2;bx<PF_W-2;bx+=3){
+    drawField(s,aosc.value,wosc.dir,bx);
+    await sleep(40);
+    if(quality==="intercepted"&&bx>=s.dx)break;
+  }
+  const v={complete:["Cut-out ball! The winger takes it in stride!","good bold"],
+    intercepted:["INTERCEPTED! The defender reads it!","bad bold"],
+    wasted:["Sails into touch... wasted possession.","warn bold"]}[quality];
+  await flash(v[0],v[1]);
+  return quality;
+}
+/* ================= breakaway mini-game ================= */
+const BF_W=62,BF_H=12,RUN_SECS=4,PLX=4;
+async function playBreakaway(speedStat){
+  const run={y:BF_H>>1,defs:[],elapsed:0,spawn:0,tackled:false,metres:0};
+  const spawnInt=0.55+speedStat*0.002;
+  function tick(dt){
+    if(run.tackled)return;
+    run.elapsed+=dt;run.metres+=dt*22;run.spawn+=dt;
+    if(run.spawn>=spawnInt){run.spawn=0;run.defs.push({x:BF_W-1,y:randint(0,BF_H-1)});}
+    const rush=26+run.elapsed*5;
+    for(const d of run.defs)d.x-=rush*dt;
+    run.defs=run.defs.filter(d=>d.x>0);
+    if(run.defs.some(d=>d.y===run.y&&Math.abs(d.x-PLX)<1.2))run.tackled=true;
+  }
+  function draw(){
+    clear();
+    const top=3,left=(W-BF_W-2)>>1;
+    center(0,"BREAKAWAY! Dodge with UP / DOWN !","title bold");
+    center(1,"Try line in "+Math.max(0,RUN_SECS-run.elapsed).toFixed(1)+"s · "+Math.floor(run.metres)+"m","warn");
+    box(top,left,BF_H+2,BF_W+2);
+    for(let r=0;r<BF_H;r++){
+      const phase=Math.floor(run.metres*2+r*7)%12;
+      for(let c=BF_W-phase-1;c>0;c-=12)put(top+1+r,left+1+c,"-","dim");
+    }
+    put(top+1+run.y,left+1+PLX,run.tackled?"%":"@",run.tackled?"bad bold":"good bold");
+    for(const d of run.defs)put(top+1+d.y,left+1+Math.round(d.x),"X","bad bold");
+    render();
+  }
+  await frameLoop((dt,keys)=>{
+    for(const k of keys){
+      if(k==="ArrowUp"||k==="k")run.y=Math.max(0,run.y-1);
+      else if(k==="ArrowDown"||k==="j")run.y=Math.min(BF_H-1,run.y+1);
+    }
+    tick(dt);draw();
+    return run.tackled||run.elapsed>=RUN_SECS;
+  });
+  await flash(run.tackled?"WRAPPED UP! Bone-rattling tackle!":"TRY!!! Under the black dot!",
+    run.tackled?"bad bold":"good bold");
+  return!run.tackled;
+}
+/* ================= training mini-game ================= */
+const ZONE=7;
+function judgeTraining(v,target){
+  const miss=Math.abs(v-target);
+  return miss<=ZONE*.3?3:miss<=ZONE*.7?2:miss<=ZONE?1:0;
+}
+async function playTraining(statName){
+  const target=20+rand()*60;
+  const osc=new Osc(0,100,120,0);
+  function draw(){
+    clear();
+    const barW=60,y=H>>1,left=(W-barW)>>1;
+    center(1,"TRAINING: "+statName.toUpperCase()+" — [SPACE] in the green!","title bold");
+    for(let i=0;i<barW;i++){
+      const v=100*i/(barW-1);
+      if(Math.abs(v-target)<=ZONE)put(y,left+i,"▒","good bold");
+      else put(y,left+i,"─","dim");
+    }
+    put(y-1,left+Math.round(osc.value/100*(barW-1)),"▼","warn bold");
+    render();
+  }
+  await frameLoop((dt,keys)=>{osc.adv(dt);draw();return keys.includes(" ");});
+  const gain=judgeTraining(osc.value,target);
+  const msg=[["Sloppy session. No improvement.","bad bold"],
+    ["Scrappy, but something stuck.","warn bold"],
+    ["Nice work. Solid session.","good bold"],
+    ["PERFECT REP! Massive gains!","good bold"]][gain];
+  await flash(msg[0],msg[1]);
+  return gain;
+}
+/* ================= match engine ================= */
+const MOMENT_INTROS={
+  breakaway:"The defence splinters — YOU'RE THROUGH THE GAP!",
+  pass:"Overlap on! You're at first receiver with numbers out wide...",
+  bomb:"Last tackle. The coach wants the bomb — put it up!",
+  penalty_kick:"Penalty in front! You're taking the two."
+};
+function pickMoments(p){
+  const n=randint(3,5);
+  const kinds=["breakaway","pass","bomb","penalty_kick"];
+  const w=[3,p.teammates<35?1:3,2,2];
+  return Array.from({length:n},()=>weighted(kinds,w));
+}
+function planMatch(opp){
+  const my=myTeam(),p=state.player,events=[];
+  for(const[side,atk,dfn,damp]of[[0,my,opp,.72],[1,opp,my,1]]){
+    const edge=(atk.strength-dfn.strength)/100;
+    const n=Math.max(0,Math.round(gauss((2.6+2.2*edge)*damp,1)));
+    for(let i=0;i<n;i++){
+      const conv=rand()<.72;
+      events.push({minute:randint(2,79),kind:"ai",side,points:4+(conv?2:0),
+        text:"TRY! "+choice(SURNAMES)+" crosses for "+atk.abbrev+"!"+(conv?" Conversion good.":"")});
+    }
+  }
+  for(let m=3;m<80;m+=randint(4,7))
+    events.push({minute:m,kind:"commentary",
+      text:choice(FLAVOUR).replace("{p}",choice(SURNAMES)).replace("{t}",choice([my,opp]).abbrev)});
+  const kinds=pickMoments(p),mins=sampleMinutes(8,75,kinds.length);
+  kinds.forEach((k,i)=>events.push({minute:mins[i],kind:"moment",moment:k}));
+  events.sort((a,b)=>a.minute-b.minute||((a.kind!=="commentary")-(b.kind!=="commentary")));
+  return events;
+}
+function drawScoreboard(opp,minute,out){
+  clear();
+  box(0,1,5,W-2,"Round "+state.roundNo);
+  center(2,myTeam().abbrev+"  "+String(out.my).padStart(2)+"   —   "+String(out.opp).padEnd(2)+"  "+opp.abbrev,"title bold");
+  center(3,String(minute).padStart(2,"0")+"'","warn bold");
+  box(6,1,H-8,W-2,"Commentary");
+  const visible=out.feed.slice(-(H-11));
+  visible.forEach((line,i)=>{
+    const hot=i===visible.length-1;
+    put(8+i,4,line,hot&&line.includes("TRY")?"good bold":hot?"bold":"dim");
+  });
+  put(H-1,2,"live — Player Moments will interrupt automatically","dim");
+  render();
+}
+async function conversion(out){
+  const p=state.player;
+  const r=await playKick(effective(p.kicking,p.energy),"CONVERSION ATTEMPT");
+  if(r.success){out.my+=2;out.goals++;p.seasonGoals++;out.feed.push(p.name+" adds the extras.");}
+  else out.feed.push(p.name+" hooks the conversion.");
+}
+async function runMoment(kind,out){
+  const p=state.player;
+  out.momTot++;
+  clear();
+  center(10,"*  PLAYER MOMENT  *","accent bold blink");
+  center(13,MOMENT_INTROS[kind],"warn bold");
+  center(16,"Get ready...","dim");
+  render();
+  await sleep(1500);
+  if(kind==="breakaway"){
+    if(await playBreakaway(effective(p.speed,p.energy))){
+      out.my+=4;out.tries++;out.momWon++;p.seasonTries++;
+      out.feed.push("TRY! "+p.name+" goes the length of the field!!");
+      await conversion(out);
+    }else out.feed.push(p.name+" is dragged down just short!");
+  }else if(kind==="pass"){
+    const q=await playPass(effective(p.passing,p.energy));
+    if(q==="complete"){
+      out.my+=4;out.momWon++;
+      out.feed.push("TRY! "+p.name+"'s cut-out ball sends the winger over!");
+      await conversion(out);
+    }else if(q==="intercepted"){
+      out.opp+=4;
+      out.feed.push("Disaster! "+p.name+"'s pass is picked off and run back for a try!");
+    }else out.feed.push(p.name+"'s pass floats into touch.");
+  }else if(kind==="bomb"){
+    const r=await playKick(effective(p.kicking,p.energy),"BOMB KICK — hang it high!");
+    if(r.success){
+      out.my+=4;out.momWon++;
+      out.feed.push(p.name+"'s bomb is spilled — the winger pounces to score!");
+      await conversion(out);
+    }else out.feed.push(p.name+"'s bomb sails dead. Seven-tackle set.");
+  }else{
+    const r=await playKick(effective(p.kicking,p.energy),"PENALTY GOAL ATTEMPT");
+    if(r.success){
+      out.my+=2;out.goals++;out.momWon++;p.seasonGoals++;
+      out.feed.push(p.name+" slots the penalty goal. Money.");
+    }else out.feed.push(p.name+" pushes the penalty attempt wide.");
+  }
+  adjust(p,"energy",-6);
+}
+async function playMatch(opp){
+  const events=planMatch(opp);
+  const out={my:0,opp:0,tries:0,goals:0,momWon:0,momTot:0,feed:[]};
+  out.feed.push("Kick-off! "+myTeam().name+" v "+opp.name+".");
+  let idx=0;
+  for(let minute=1;minute<=80;minute++){
+    while(idx<events.length&&events[idx].minute<=minute){
+      const ev=events[idx++];
+      if(ev.kind==="commentary")out.feed.push(ev.text);
+      else if(ev.kind==="ai"){
+        if(ev.side===0)out.my+=ev.points;else out.opp+=ev.points;
+        out.feed.push(ev.text);
+      }else{
+        drawScoreboard(opp,minute,out);
+        await sleep(400);
+        await runMoment(ev.moment,out);
+      }
+    }
+    if(minute===40)out.feed.push("HALF TIME: "+myTeam().abbrev+" "+out.my+" — "+out.opp+" "+opp.abbrev);
+    drawScoreboard(opp,minute,out);
+    await sleep(140);
+  }
+  out.feed.push("FULL TIME: "+myTeam().abbrev+" "+out.my+" — "+out.opp+" "+opp.abbrev);
+  drawScoreboard(opp,80,out);
+  await sleep(600);
+  return out;
+}
+function applyPostMatch(opp,out){
+  const p=state.player,my=myTeam(),lines=[];
+  recordResult(my,out.my,out.opp);recordResult(opp,out.opp,out.my);
+  const won=out.my>out.opp,drew=out.my===out.opp;
+  p.cash+=state.contract.wage;
+  lines.push("Match wage: +$"+state.contract.wage);
+  adjust(p,"energy",-18);
+  const share=out.momTot?out.momWon/out.momTot:.5;
+  if(won){adjust(p,"coach",6);adjust(p,"fans",5);adjust(p,"teammates",4);lines.push("Victory! The sheds are buzzing.");}
+  else if(drew){adjust(p,"coach",1);lines.push("A draw. Mixed feelings in the sheds.");}
+  else{adjust(p,"coach",-5);adjust(p,"fans",-3);lines.push("Loss. The coach glares at his clipboard.");}
+  if(share>=.75){adjust(p,"fans",6);adjust(p,"coach",4);lines.push("You starred in the big moments — the crowd chants your name!");}
+  else if(share<=.25){adjust(p,"fans",-4);adjust(p,"coach",-4);adjust(p,"teammates",-2);lines.push("You fluffed the big moments... heads shake in the stands.");}
+  const bonus=out.tries*150+out.goals*40;
+  if(bonus){p.cash+=bonus;lines.push("Performance bonuses: +$"+bonus);}
+  return lines;
+}
+/* ================= dashboard & screens ================= */
+const MENU=[["Play Next Match","match"],["Training Ground","training"],["Shop","shop"],
+["Relationships","relationships"],["League Ladder","ladder"],["Quit Career","quit"]];
+function drawDashboard(sel){
+  clear();
+  const p=state.player,team=myTeam();
+  center(0,"N R L   C A R E E R   S I M U L A T O R","title bold");
+  center(1,"Season "+state.seasonNo+"  ·  Round "+state.roundNo+"/"+ROUNDS,"dim");
+  box(3,1,13,38,p.name+" · "+team.abbrev);
+  let row=5;
+  for(const k of STAT_KEYS){meter(row,3,15,p[k],capital(k));row++;}
+  row++;
+  meter(row,3,15,p.energy,"Energy");
+  put(row+2,3,"Overall: "+overall(p),"accent bold");
+  put(row+2,18,"Cash: $"+p.cash,"good");
+  box(3,41,13,36,"Contract & Standing");
+  put(5,43,"Club: "+state.contract.club);
+  put(6,43,"Wage: $"+state.contract.wage+"/match");
+  put(7,43,"Seasons left: "+state.contract.seasonsLeft);
+  row=9;
+  for(const k of REL_KEYS){meter(row,43,12,p[k],capital(k));row++;}
+  if(benched(p))put(row+1,43,"! BENCHED — coach is furious!","bad bold");
+  box(17,1,MENU.length+2,38,"Menu");
+  MENU.forEach(([label],i)=>{
+    put(18+i,3,(i===sel?"▶ ":"  ")+label.padEnd(30),i===sel?"accent bold rev":"");
+  });
+  put(H-1,1,"↑/↓ select · Enter confirm · q quit","dim");
+  render();
+}
+async function dashboardMenu(){
+  let sel=0;
+  while(true){
+    drawDashboard(sel);
+    const k=await waitKey();
+    if(k==="ArrowUp"||k==="k")sel=(sel+MENU.length-1)%MENU.length;
+    else if(k==="ArrowDown"||k==="j")sel=(sel+1)%MENU.length;
+    else if(k==="Enter")return MENU[sel][1];
+    else if(k==="q")return"quit";
+  }
+}
+async function showLines(title,lines){
+  clear();
+  center(1,title,"title bold");
+  lines.forEach((l,i)=>put(3+i,4,l));
+  put(H-1,2,"Press any key to continue...","dim");
+  render();
+  await waitKey();
+}
+async function showLadder(){
+  clear();
+  center(0,"NRL LADDER","title bold");
+  put(2,2," # Team                           P   W   D   L    PD  Pts","bold");
+  sortLadder(state.teams).forEach((t,i)=>{
+    const pd=t.pf-t.pa;
+    const line=String(i+1).padStart(2)+" "+t.name.padEnd(28)+" "+String(t.played).padStart(3)+" "+
+      String(t.won).padStart(3)+" "+String(t.drawn).padStart(3)+" "+String(t.lost).padStart(3)+" "+
+      String((pd>=0?"+":"")+pd).padStart(5)+" "+String(t.pts).padStart(4);
+    put(3+i,2,line,t===myTeam()?"good bold":"");
+  });
+  put(H-1,2,"Press any key to return...","dim");
+  render();
+  await waitKey();
+}
+async function pickFrom(title,options){
+  let sel=0;
+  while(true){
+    clear();
+    center(1,title,"title bold");
+    options.forEach((opt,i)=>put(3+i,4,(i===sel?"▶ ":"  ")+opt,i===sel?"accent bold rev":""));
+    put(H-1,2,"↑/↓ select · Enter confirm · q back","dim");
+    render();
+    const k=await waitKey();
+    if(k==="ArrowUp"||k==="k")sel=(sel+options.length-1)%options.length;
+    else if(k==="ArrowDown"||k==="j")sel=(sel+1)%options.length;
+    else if(k==="Enter")return sel;
+    else if(k==="q")return null;
+  }
+}
+async function trainingScreen(){
+  const p=state.player;
+  while(true){
+    const opts=STAT_KEYS.map(k=>capital(k).padEnd(10)+" "+String(p[k]).padStart(3)+"   (costs 15% energy)").concat(["Back"]);
+    const c=await pickFrom("TRAINING GROUND — Energy: "+p.energy+"%",opts);
+    if(c===null||c===opts.length-1)return;
+    if(p.energy<15){await flash("Too exhausted to train! Buy an energy drink.","bad bold");continue;}
+    adjust(p,"energy",-15);
+    const gain=await playTraining(STAT_KEYS[c]);
+    adjust(p,STAT_KEYS[c],gain);
+  }
+}
+async function shopScreen(){
+  const p=state.player;
+  while(true){
+    const opts=SHOP.map(([n,cost,desc])=>n.padEnd(16)+" $"+String(cost).padEnd(5)+" "+desc).concat(["Back"]);
+    const c=await pickFrom("SHOP — Cash: $"+p.cash,opts);
+    if(c===null||c===opts.length-1)return;
+    const[name,cost,,key,value]=SHOP[c];
+    if(p.cash<cost){await flash("Not enough cash!","bad bold");continue;}
+    if(key==="energy"&&p.energy>=100){await flash("You're already fully charged!","warn bold");continue;}
+    p.cash-=cost;adjust(p,key,value);
+    await flash("Bought "+name+"!","good bold");
+  }
+}
+async function relationshipsScreen(){
+  const p=state.player;
+  while(true){
+    const status=REL_KEYS.map(k=>capital(k)+" "+p[k]+"%").join(" · ");
+    const opts=REL_ACTIONS.map(([label,,gain,en,cash])=>
+      label.padEnd(38)+" (+"+gain+" · -"+en+"% energy"+(cash?" · $"+cash:"")+")").concat(["Back"]);
+    const c=await pickFrom("RELATIONSHIPS — "+status,opts);
+    if(c===null||c===opts.length-1)return;
+    const[,key,gain,en,cash]=REL_ACTIONS[c];
+    if(p.energy<en){await flash("Too tired for that right now.","bad bold");continue;}
+    if(p.cash<cash){await flash("Not enough cash!","bad bold");continue;}
+    adjust(p,"energy",-en);p.cash-=cash;adjust(p,key,gain);
+    await flash(capital(key)+" +"+gain+"!","good bold");
+  }
+}
+/* ================= career loop ================= */
+async function playRound(fixtures){
+  const p=state.player;
+  const oppIdx=opponentFor(fixtures,state.roundNo,state.teamIdx);
+  if(oppIdx===BYE){
+    myTeam().pts+=2;
+    adjust(p,"energy",30);
+    await showLines("ROUND "+state.roundNo+" — BYE WEEK",[
+      "A week off. You rest up and recover 30% energy.",
+      myTeam().abbrev+" banks 2 competition points."]);
+  }else if(benched(p)){
+    const opp=state.teams[oppIdx];
+    const mine=aiScore(myTeam(),opp),theirs=aiScore(opp,myTeam());
+    recordResult(myTeam(),mine,theirs);recordResult(opp,theirs,mine);
+    adjust(p,"coach",8);adjust(p,"energy",10);
+    await showLines("ROUND "+state.roundNo+" — BENCHED",[
+      "The coach has dropped you. You watch from the sidelines.",
+      "Final score: "+myTeam().abbrev+" "+mine+" — "+theirs+" "+opp.abbrev,
+      "You trained hard all week. The coach noticed. (Coach +8)"]);
+  }else{
+    const opp=state.teams[oppIdx];
+    const out=await playMatch(opp);
+    const lines=applyPostMatch(opp,out);
+    const header=out.my>out.opp?"WIN":out.my===out.opp?"DRAW":"LOSS";
+    await showLines("FULL TIME — "+header+" "+out.my+"-"+out.opp,lines);
+  }
+  simulateOtherMatches(fixtures);
+  state.roundNo++;
+}
+async function endOfSeason(){
+  const p=state.player;
+  const pos=sortLadder(state.teams).findIndex(t=>t===myTeam())+1;
+  const lines=[
+    myTeam().name+" finish the season in position "+pos+".",
+    "Your season: "+p.seasonTries+" tries, "+p.seasonGoals+" goals."];
+  state.contract.seasonsLeft--;
+  let alive=true;
+  if(state.contract.seasonsLeft<=0){
+    const score=overall(p)+Math.floor(p.coach/2)+Math.floor(p.fans/2);
+    if(score>=95){
+      const wage=Math.floor(state.contract.wage*1.5);
+      state.contract={club:myTeam().name,wage,seasonsLeft:2};
+      lines.push("Contract renewed! New wage: $"+wage+"/match for 2 seasons.");
+    }else{
+      lines.push("The club releases you. Your career is over.");
+      alive=false;
+    }
+  }else lines.push(state.contract.seasonsLeft+" season(s) left on your deal.");
+  await showLines("END OF SEASON "+state.seasonNo,lines);
+  if(!alive)return false;
+  state.seasonNo++;state.roundNo=1;p.careerYear++;
+  p.seasonTries=0;p.seasonGoals=0;p.energy=100;
+  for(const t of state.teams){t.played=t.won=t.drawn=t.lost=0;t.pf=t.pa=t.pts=0;}
+  return true;
+}
+async function careerLoop(){
+  const fixtures=genFixtures(TEAMS.length,ROUNDS);
+  while(true){
+    if(state.roundNo>ROUNDS){
+      if(!(await endOfSeason()))return;
+      continue;
+    }
+    const action=await dashboardMenu();
+    if(action==="quit")return;
+    if(action==="ladder")await showLadder();
+    else if(action==="match")await playRound(fixtures);
+    else if(action==="training")await trainingScreen();
+    else if(action==="shop")await shopScreen();
+    else if(action==="relationships")await relationshipsScreen();
+  }
+}
+/* ================= title & main ================= */
+const BANNER=[
+"███╗   ██╗██████╗ ██╗     ",
+"████╗  ██║██╔══██╗██║     ",
+"██╔██╗ ██║██████╔╝██║     ",
+"██║╚██╗██║██╔══██╗██║     ",
+"██║ ╚████║██║  ██║███████╗",
+"╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"];
+async function titleScreen(){
+  let name="";
+  while(true){
+    clear();
+    BANNER.forEach((l,i)=>center(4+i,l,"title bold"));
+    center(12,"C A R E E R   S I M U L A T O R","accent bold");
+    center(15,"From park footy to Immortal. One bar-fill at a time.","dim");
+    center(19,"Enter your name:","bold");
+    center(21,"  "+(name||" ")+"█  ","warn bold");
+    center(25,"[Enter] start career"+(name.trim()?"":" as 'Rookie'"),"good");
+    center(27,"Keyboard required · Space locks the bars · Arrows dodge · q backs out","dim");
+    render();
+    const k=await waitKey();
+    if(k==="Enter")return name.trim()||"Rookie";
+    if(k==="Backspace")name=name.slice(0,-1);
+    else if(k.length===1&&/[a-zA-Z '\-]/.test(k)&&name.length<14)name+=k;
+  }
+}
+async function gameOver(){
+  const p=state.player;
+  await showLines("CAREER OVER",[
+    p.name+" retires after "+p.careerYear+" season(s) in first grade.",
+    "Final overall rating: "+overall(p)+".",
+    "",
+    "Press any key to start a new career."]);
+}
+(async function(){
+  while(true){
+    const name=await titleScreen();
+    state=newGame(name);
+    await careerLoop();
+    await gameOver();
+  }
+})();
+</script>
+</body>
+</html>
