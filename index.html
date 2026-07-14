@@ -20,6 +20,8 @@
        background:repeating-linear-gradient(0deg,rgba(0,0,0,.15) 0 1px,transparent 1px 3px);}
   pre#screen{margin:0;font-family:inherit;font-size:clamp(6px,1.02vw,15px);line-height:1.18;
        color:var(--text);text-shadow:0 0 6px rgba(200,210,220,.14);}
+  canvas#game{display:none;width:min(90vw,960px);aspect-ratio:960/600;border-radius:6px;
+       image-rendering:pixelated;}
   .title{color:var(--title)} .good{color:var(--good)} .bad{color:var(--bad)}
   .warn{color:var(--warn)} .accent{color:var(--accent)} .dim{color:var(--dim)}
   .bold{font-weight:700}
@@ -33,10 +35,10 @@
 </style>
 </head>
 <body>
-<div class="crt"><pre id="screen"></pre></div>
+<div class="crt"><pre id="screen"></pre><canvas id="game" width="960" height="600"></canvas></div>
 <script>
 "use strict";
-/* ================= character-grid screen ================= */
+/* ================= character-grid screen (menus, ticker) ================= */
 const W=100,H=34;
 const el=document.getElementById("screen");
 let buf;
@@ -65,6 +67,7 @@ function meter(y,x,width,value,label=""){
 }
 function wrapSpan(t,cls){return cls?'<span class="'+cls+'">'+t+"</span>":t;}
 function render(){
+  textMode();
   let html="";
   for(const row of buf){
     let cur=null,run="";
@@ -75,6 +78,82 @@ function render(){
     html+=wrapSpan(run,cur)+"\n";
   }
   el.innerHTML=html;
+}
+/* ================= arcade canvas layer (mini-games) ================= */
+const cv=document.getElementById("game");
+const ctx=cv.getContext("2d");
+const CW=960,CH=600;
+const DPR=Math.min(2,window.devicePixelRatio||1);
+cv.width=CW*DPR;cv.height=CH*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);
+function canvasMode(){cv.style.display="block";el.style.display="none";}
+function textMode(){el.style.display="block";cv.style.display="none";}
+const NIGHT="#0a1018",FIELD_A="#2e7d32",FIELD_B="#28702c",LINE="rgba(255,255,255,.78)";
+const MY_KIT={jersey:"#37b6be",hoops:"#0c3550",shorts:"#eef2f4",skin:"#e2b184",hair:"#2b2118"};
+const OPP_KIT={jersey:"#d84f4f",hoops:"#5c1717",shorts:"#1c1c1c",skin:"#caa27c",hair:"#151210"};
+const CROWD=[];
+{
+  const cols=["#c9563f","#3f7fc9","#c9b53f","#7fc93f","#b04fd0","#e8e8e8","#3fc9b5"];
+  for(let i=0;i<900;i++)CROWD.push({x:Math.random()*CW,y:8+Math.random()*68,c:cols[i%cols.length],tw:Math.random()*6.28});
+}
+function drawCrowd(t){
+  ctx.fillStyle="#101720";ctx.fillRect(0,0,CW,86);
+  for(const s of CROWD){
+    ctx.globalAlpha=.45+.4*Math.abs(Math.sin(t*2+s.tw));
+    ctx.fillStyle=s.c;ctx.fillRect(s.x,s.y,3,3);
+  }
+  ctx.globalAlpha=1;
+  ctx.fillStyle="#0d141c";ctx.fillRect(0,86,CW,8);
+}
+function drawPlayerSprite(cx,footY,u,kit,frame=0,facing=1,pose="run"){
+  ctx.save();ctx.translate(cx,footY);if(facing<0)ctx.scale(-1,1);
+  const R=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(x*u,y*u,w*u,h*u);};
+  const skin=kit.skin;
+  if(pose==="kick"){
+    R(-2.2,-4,1.8,4,skin);R(-2.4,-.9,2.2,.9,"#111");
+    R(.4,-5.4,3.2,1.6,skin);R(3.4,-5.8,1.5,1.5,"#111");
+  }else{
+    const a=frame?1:-1;
+    R(-2.4+a*.8,-4,1.8,2.4,skin);R(.6-a*.8,-4,1.8,2.4,skin);
+    R(-2.4+a*.8,-1.7,1.8,1.1,kit.hoops);R(.6-a*.8,-1.7,1.8,1.1,kit.hoops);
+    R(-2.4+a*.8,-.7,1.9,.7,"#111");R(.6-a*.8,-.7,1.9,.7,"#111");
+  }
+  R(-2.6,-6.1,5.2,2.3,kit.shorts);
+  R(-2.8,-11,5.6,5,kit.jersey);
+  R(-2.8,-9.5,5.6,1.4,kit.hoops);
+  const sw=frame?1:-1;
+  R(-4.2,-10.8+sw*.5,1.4,3.4,kit.jersey);R(2.8,-10.8-sw*.5,1.4,3.4,kit.jersey);
+  R(-4.2,-7.4+sw*.5,1.4,1.2,skin);R(2.8,-7.4-sw*.5,1.4,1.2,skin);
+  R(-1.5,-14.4,3,3.5,skin);
+  R(-1.7,-14.9,3.4,1.3,kit.hair);
+  ctx.restore();
+}
+function drawBall(x,y,s=1,rot=-.5){
+  ctx.save();ctx.translate(x,y);ctx.rotate(rot);ctx.scale(s,s);
+  ctx.fillStyle="#8a5a2b";
+  ctx.beginPath();ctx.ellipse(0,0,11,7,0,0,6.3);ctx.fill();
+  ctx.strokeStyle="#e8e0d0";ctx.lineWidth=1.6;
+  ctx.beginPath();ctx.moveTo(-7,0);ctx.lineTo(7,0);ctx.stroke();
+  ctx.restore();
+}
+function drawPosts(cx,groundY){
+  ctx.fillStyle="#e8ecef";
+  ctx.fillRect(cx-64,groundY-190,8,190);
+  ctx.fillRect(cx+56,groundY-190,8,190);
+  ctx.fillRect(cx-64,groundY-104,128,8);
+  ctx.fillStyle="#d04040";
+  ctx.fillRect(cx-67,groundY-36,14,36);
+  ctx.fillRect(cx+53,groundY-36,14,36);
+}
+function atext(text,x,y,size,color,align="center"){
+  ctx.font="700 "+size+"px ui-monospace,Menlo,Consolas,monospace";
+  ctx.textAlign=align;ctx.textBaseline="middle";
+  ctx.lineWidth=Math.max(3,size/8);ctx.strokeStyle="#06090d";ctx.strokeText(text,x,y);
+  ctx.fillStyle=color;ctx.fillText(text,x,y);
+}
+async function canvasBanner(text,color,ms=1300){
+  ctx.fillStyle="rgba(4,7,10,.6)";ctx.fillRect(0,CH/2-58,CW,116);
+  atext(text,CW/2,CH/2,40,color);
+  await sleep(ms);
 }
 /* ================= input & timing ================= */
 let keyBuf=[],waiters=[];
@@ -218,7 +297,7 @@ function simulateOtherMatches(fixtures){
     recordResult(ta,sa,sb);recordResult(tb,sb,sa);
   }
 }
-/* ================= kick mini-game ================= */
+/* ================= kick mini-game (arcade) ================= */
 const POWER_CENTER=75,ANGLE_CENTER=0;
 const sweetWidth=k=>6+k*0.10;
 function judgeKick(power,angle,kstat){
@@ -227,51 +306,86 @@ function judgeKick(power,angle,kstat){
   const quality=success&&Math.abs(power-POWER_CENTER)<4&&Math.abs(angle)<4?"perfect":success?"good":"miss";
   return{power,angle,success,quality};
 }
-function drawPowerBar(value,kstat,label){
-  clear();
-  const barH=20,top=4,cx=W>>1;
-  center(1,label,"accent bold");
-  center(2,"POWER — press [SPACE] to lock!","title bold");
-  const w=sweetWidth(kstat);
-  for(let i=0;i<barH;i++){
-    const level=100*(barH-1-i)/(barH-1);
-    const cls=Math.abs(level-POWER_CENTER)<=w?"good bold":"dim";
-    put(top+i,cx-3,"│"+(level<=value?"▓▓▓▓":"    ")+"│",cls);
-    if(Math.abs(level-value)<100/barH/2)put(top+i,cx+4,"◀ "+String(Math.round(value)).padStart(3),"warn bold");
+function drawKickScene(t,label,opts={}){
+  canvasMode();
+  ctx.fillStyle=NIGHT;ctx.fillRect(0,0,CW,CH);
+  drawCrowd(t);
+  for(let y=94,i=0;y<CH;y+=46,i++){ctx.fillStyle=i%2?FIELD_A:FIELD_B;ctx.fillRect(0,y,CW,46);}
+  ctx.fillStyle=LINE;
+  ctx.fillRect(0,286,CW,4);
+  ctx.fillRect(0,500,CW,3);
+  drawPosts(CW/2,290);
+  if(!opts.ballFlying){
+    ctx.fillStyle="#d8d8d8";ctx.fillRect(CW/2-3,478,6,8);
+    drawBall(CW/2,470,1.15,-.9);
   }
-  put(top+barH,cx-3,"└────┘","dim");
-  render();
+  drawPlayerSprite(CW/2-42,506,5.2,MY_KIT,Math.floor(t*6)%2,1,opts.kickPose?"kick":"run");
+  atext(label,CW/2,44,26,"#d98fe8");
 }
-function drawAngleBar(value,power,kstat,label){
-  clear();
-  const barW=50,y=H>>1,left=(W-barW)>>1;
-  center(1,label,"accent bold");
-  center(2,"WIND / ANGLE — press [SPACE] at the centre!","title bold");
-  center(4,"Power locked: "+Math.round(power),"dim");
-  const w=sweetWidth(kstat);
-  for(let i=0;i<barW;i++){
-    const ang=-50+100*i/(barW-1);
-    if(Math.abs(ang-ANGLE_CENTER)<=w)put(y,left+i,"▒","good bold");
-    else put(y,left+i,"─","dim");
-  }
-  put(y-1,left+Math.round((value+50)/100*(barW-1)),"▼","warn bold");
-  put(y+1,left,"◀ hook","dim");
-  put(y+1,left+barW-7,"slice ▶","dim");
-  render();
+function drawPowerGauge(value,kstat,locked){
+  const x=64,top=150,h=320,w=34;
+  ctx.fillStyle="rgba(6,10,14,.74)";ctx.fillRect(x-16,top-42,w+70,h+76);
+  const sw=sweetWidth(kstat);
+  ctx.fillStyle="#14301c";ctx.fillRect(x,top,w,h);
+  const y1=top+h*(1-(POWER_CENTER+sw)/100),y2=top+h*(1-(POWER_CENTER-sw)/100);
+  ctx.fillStyle="#2f9e4f";ctx.fillRect(x,y1,w,y2-y1);
+  const fy=top+h*(1-value/100);
+  ctx.fillStyle=locked?"#4ec96a":"#e0a83c";ctx.fillRect(x+5,fy,w-10,top+h-fy);
+  ctx.fillStyle="#fff";ctx.fillRect(x-6,fy-2,w+12,4);
+  atext("POWER",x+w/2,top-24,15,"#5fd7d7");
+  atext(String(Math.round(value)),x+w/2,top+h+22,17,locked?"#4ec96a":"#e0a83c");
+  if(!locked)atext("[SPACE]",x+w/2,top+h+44,12,"#8b98a5");
+}
+function drawAngleGauge(value,kstat){
+  const w=420,x=(CW-w)/2,y=548,h=20;
+  ctx.fillStyle="rgba(6,10,14,.74)";ctx.fillRect(x-20,y-36,w+40,72);
+  ctx.fillStyle="#14301c";ctx.fillRect(x,y,w,h);
+  const sw=sweetWidth(kstat);
+  const zx=x+w*((ANGLE_CENTER-sw+50)/100),zw=w*(2*sw/100);
+  ctx.fillStyle="#2f9e4f";ctx.fillRect(zx,y,zw,h);
+  ctx.fillStyle="rgba(255,255,255,.5)";ctx.fillRect(x+w/2-1,y-4,2,h+8);
+  const mx=x+w*((value+50)/100);
+  ctx.fillStyle="#fff";
+  ctx.beginPath();ctx.moveTo(mx,y-4);ctx.lineTo(mx-7,y-16);ctx.lineTo(mx+7,y-16);ctx.closePath();ctx.fill();
+  atext("WIND / ANGLE — [SPACE] at the centre",x+w/2,y-26,14,"#5fd7d7");
+  atext("HOOK",x-38,y+h/2,13,"#8b98a5");
+  atext("SLICE",x+w+40,y+h/2,13,"#8b98a5");
 }
 async function playKick(kstat,label){
   const p=new Osc(0,100,140);
-  await frameLoop((dt,keys)=>{p.adv(dt);drawPowerBar(p.value,kstat,label);return keys.includes(" ");});
+  await frameLoop((dt,keys)=>{
+    p.adv(dt);
+    drawKickScene(performance.now()/1000,label);
+    drawPowerGauge(p.value,kstat,false);
+    return keys.includes(" ");
+  });
   const a=new Osc(-50,50,110,-50);
-  await frameLoop((dt,keys)=>{a.adv(dt);drawAngleBar(a.value,p.value,kstat,label);return keys.includes(" ");});
+  await frameLoop((dt,keys)=>{
+    a.adv(dt);
+    drawKickScene(performance.now()/1000,label);
+    drawPowerGauge(p.value,kstat,true);
+    drawAngleGauge(a.value,kstat);
+    return keys.includes(" ");
+  });
   const r=judgeKick(p.value,a.value,kstat);
-  const v={perfect:["PERFECT STRIKE! Right through the middle!","good bold"],
-    good:["It's good! The kick sails over!","good bold"],
-    miss:["Missed! It drifts wide...","bad bold"]}[r.quality];
-  await flash(v[0],v[1]);
+  const ex=CW/2+r.angle*3.2;
+  const ey=r.success?168:(Math.abs(r.angle)>sweetWidth(kstat)?200:330);
+  const frames=30;
+  for(let i=0;i<=frames;i++){
+    const ft=i/frames,t=performance.now()/1000;
+    drawKickScene(t,label,{ballFlying:true,kickPose:i<8});
+    const bx=CW/2+(ex-CW/2)*ft;
+    const by=470+(ey-470)*ft-Math.sin(ft*Math.PI)*90;
+    drawBall(bx,by,1.15-.7*ft,ft*9);
+    await sleep(26);
+  }
+  const v={perfect:["PERFECT STRIKE!","#4ec96a"],
+    good:["IT'S GOOD!","#4ec96a"],
+    miss:["MISSED! Drifts wide...","#ff5f5f"]}[r.quality];
+  await canvasBanner(v[0],v[1]);
   return r;
 }
-/* ================= pass mini-game ================= */
+/* ================= pass mini-game (arcade) ================= */
 const PF_W=60,PF_H=16,MAX_ANGLE=50,DEF_REACH=1.4;
 const catchRadius=p=>1.0+p*0.015;
 function makeSetup(){return{py:PF_H>>1,px:3,dy:randint(3,PF_H-4),dx:PF_W>>1,wy:randint(2,PF_H-3),wx:PF_W-5};}
@@ -280,22 +394,39 @@ function judgePass(s,angle,pstat){
   if(Math.abs(trajY(s,angle,s.dx)-s.dy)<=DEF_REACH)return"intercepted";
   return Math.abs(trajY(s,angle,s.wx)-s.wy)<=catchRadius(pstat)?"complete":"wasted";
 }
-function drawField(s,angle,wingerDir,ballX=null){
-  clear();
-  const top=3,left=(W-PF_W-2)>>1;
-  center(1,"PLAYMAKER PASS — [SPACE] to release!","title bold");
-  box(top,left,PF_H+2,PF_W+2);
-  const P=(y,x,ch,cls)=>put(top+1+Math.round(y),left+1+Math.round(x),ch,cls);
-  P(s.py,s.px,"@","good bold");
-  P(s.dy,s.dx,"X","bad bold");
-  P(s.wy,s.wx,"O","accent bold");
-  P(s.wy,s.wx+1,wingerDir<0?"↑":"↓","dim");
-  const endX=ballX===null?s.px+8:Math.min(PF_W-1,ballX);
-  for(let x=s.px+1;x<endX;x++){
-    const y=trajY(s,angle,x);
-    if(y>=0&&y<PF_H)P(y,x,ballX===null?"·":"o",ballX===null?"warn":"warn bold");
+const pgx=x=>52+x*(856/PF_W);
+const pgy=y=>132+y*(400/(PF_H-1));
+function drawPassScene(t,s,angle,opts={}){
+  canvasMode();
+  ctx.fillStyle=NIGHT;ctx.fillRect(0,0,CW,CH);
+  drawCrowd(t);
+  for(let x=0,i=0;x<CW;x+=80,i++){ctx.fillStyle=i%2?FIELD_A:FIELD_B;ctx.fillRect(x,94,80,CH-94);}
+  ctx.fillStyle=LINE;
+  ctx.fillRect(28,104,CW-56,4);
+  ctx.fillRect(28,CH-22,CW-56,4);
+  ctx.fillStyle="rgba(255,255,255,.12)";ctx.fillRect(CW-84,108,56,CH-130);
+  ctx.fillStyle=LINE;ctx.fillRect(CW-88,108,5,CH-130);
+  ctx.save();ctx.translate(CW-52,CH/2);ctx.rotate(Math.PI/2);
+  atext("T R Y   L I N E",0,0,20,"rgba(255,255,255,.5)");
+  ctx.restore();
+  atext("PLAYMAKER PASS — [SPACE] to release!",CW/2,44,24,"#d98fe8");
+  if(!opts.hideAim){
+    ctx.fillStyle="rgba(255,235,160,.9)";
+    for(let x=s.px+2;x<s.px+16;x+=1.6){
+      const y=trajY(s,angle,x);
+      if(y>=0&&y<PF_H)ctx.fillRect(pgx(x)-2,pgy(y)-2,4,4);
+    }
   }
-  render();
+  const fr=Math.floor(t*7)%2;
+  drawPlayerSprite(pgx(s.px),pgy(s.py)+16,4.6,MY_KIT,fr,1);
+  drawPlayerSprite(pgx(s.dx),pgy(s.dy)+16,4.6,OPP_KIT,1-fr,-1);
+  drawPlayerSprite(pgx(s.wx),pgy(s.wy)+16,4.6,MY_KIT,fr,1);
+  atext("YOU",pgx(s.px),pgy(s.py)-58,13,"#5fd7d7");
+  atext("WINGER",pgx(s.wx),pgy(s.wy)-58,13,"#5fd7d7");
+  if(opts.ballAt){
+    const[bx,by]=opts.ballAt;
+    drawBall(pgx(bx),pgy(by),1,t*10);
+  }
 }
 async function playPass(pstat){
   const s=makeSetup();
@@ -303,23 +434,28 @@ async function playPass(pstat){
   const wosc=new Osc(2,PF_H-3,6,s.wy);
   await frameLoop((dt,keys)=>{
     aosc.adv(dt);s.wy=Math.round(wosc.adv(dt));
-    drawField(s,aosc.value,wosc.dir);
+    drawPassScene(performance.now()/1000,s,aosc.value);
     return keys.includes(" ");
   });
   const quality=judgePass(s,aosc.value,pstat);
-  for(let bx=s.px+2;bx<PF_W-2;bx+=3){
-    drawField(s,aosc.value,wosc.dir,bx);
-    await sleep(40);
+  for(let bx=s.px+1;bx<PF_W-2;bx+=1.4){
+    const by=trajY(s,aosc.value,bx);
+    if(by<-1||by>PF_H)break;
+    drawPassScene(performance.now()/1000,s,aosc.value,{hideAim:true,ballAt:[bx,by]});
+    await sleep(22);
     if(quality==="intercepted"&&bx>=s.dx)break;
+    if(quality==="complete"&&bx>=s.wx)break;
   }
-  const v={complete:["Cut-out ball! The winger takes it in stride!","good bold"],
-    intercepted:["INTERCEPTED! The defender reads it!","bad bold"],
-    wasted:["Sails into touch... wasted possession.","warn bold"]}[quality];
-  await flash(v[0],v[1]);
+  const v={complete:["CUT-OUT BALL! Winger takes it!","#4ec96a"],
+    intercepted:["INTERCEPTED!","#ff5f5f"],
+    wasted:["Sails into touch...","#e0a83c"]}[quality];
+  await canvasBanner(v[0],v[1]);
   return quality;
 }
-/* ================= breakaway mini-game ================= */
+/* ================= breakaway mini-game (arcade) ================= */
 const BF_W=62,BF_H=12,RUN_SECS=4,PLX=4;
+const bgx=x=>48+x*(864/BF_W);
+const bgy=y=>158+y*(380/(BF_H-1));
 async function playBreakaway(speedStat){
   const run={y:BF_H>>1,defs:[],elapsed:0,spawn:0,tackled:false,metres:0};
   const spawnInt=0.55+speedStat*0.002;
@@ -333,18 +469,30 @@ async function playBreakaway(speedStat){
     if(run.defs.some(d=>d.y===run.y&&Math.abs(d.x-PLX)<1.2))run.tackled=true;
   }
   function draw(){
-    clear();
-    const top=3,left=(W-BF_W-2)>>1;
-    center(0,"BREAKAWAY! Dodge with UP / DOWN !","title bold");
-    center(1,"Try line in "+Math.max(0,RUN_SECS-run.elapsed).toFixed(1)+"s · "+Math.floor(run.metres)+"m","warn");
-    box(top,left,BF_H+2,BF_W+2);
-    for(let r=0;r<BF_H;r++){
-      const phase=Math.floor(run.metres*2+r*7)%12;
-      for(let c=BF_W-phase-1;c>0;c-=12)put(top+1+r,left+1+c,"-","dim");
+    canvasMode();
+    const t=performance.now()/1000;
+    ctx.fillStyle=NIGHT;ctx.fillRect(0,0,CW,CH);
+    drawCrowd(t);
+    const off=-(run.metres*14)%160;
+    for(let x=off-160,i=0;x<CW+160;x+=80,i++){
+      ctx.fillStyle=i%2?FIELD_A:FIELD_B;ctx.fillRect(x,94,80,CH-94);
     }
-    put(top+1+run.y,left+1+PLX,run.tackled?"%":"@",run.tackled?"bad bold":"good bold");
-    for(const d of run.defs)put(top+1+d.y,left+1+Math.round(d.x),"X","bad bold");
-    render();
+    ctx.fillStyle=LINE;
+    ctx.fillRect(0,140,CW,3);ctx.fillRect(0,CH-28,CW,3);
+    ctx.fillStyle="rgba(255,255,255,.35)";
+    for(let i=0;i<6;i++){
+      const sx=(i*173+run.metres*90)%CW;
+      ctx.fillRect(CW-sx,150+i*70,44,2);
+    }
+    const fr=Math.floor(t*9)%2;
+    drawPlayerSprite(bgx(PLX),bgy(run.y)+16,5,MY_KIT,fr,1,run.tackled?"kick":"run");
+    for(const d of run.defs)drawPlayerSprite(bgx(d.x),bgy(d.y)+16,5,OPP_KIT,1-fr,-1);
+    atext("BREAKAWAY! Dodge with UP / DOWN",CW/2,44,24,"#d98fe8");
+    atext("Try line in "+Math.max(0,RUN_SECS-run.elapsed).toFixed(1)+"s   ·   "+Math.floor(run.metres)+"m",
+      CW/2,72,17,"#e0a83c");
+    if(run.tackled){
+      atext("CRUNCH!",bgx(PLX)+40,bgy(run.y)-60,30,"#ff5f5f");
+    }
   }
   await frameLoop((dt,keys)=>{
     for(const k of keys){
@@ -354,11 +502,11 @@ async function playBreakaway(speedStat){
     tick(dt);draw();
     return run.tackled||run.elapsed>=RUN_SECS;
   });
-  await flash(run.tackled?"WRAPPED UP! Bone-rattling tackle!":"TRY!!! Under the black dot!",
-    run.tackled?"bad bold":"good bold");
+  if(run.tackled){draw();await sleep(350);}
+  await canvasBanner(run.tackled?"WRAPPED UP!":"TRY!!!",run.tackled?"#ff5f5f":"#4ec96a");
   return!run.tackled;
 }
-/* ================= training mini-game ================= */
+/* ================= training mini-game (arcade) ================= */
 const ZONE=7;
 function judgeTraining(v,target){
   const miss=Math.abs(v-target);
@@ -367,34 +515,58 @@ function judgeTraining(v,target){
 async function playTraining(statName){
   const target=20+rand()*60;
   const osc=new Osc(0,100,120,0);
+  const x0=150,x1=810,ty=440;
   function draw(){
-    clear();
-    const barW=60,y=H>>1,left=(W-barW)>>1;
-    center(1,"TRAINING: "+statName.toUpperCase()+" — [SPACE] in the green!","title bold");
-    for(let i=0;i<barW;i++){
-      const v=100*i/(barW-1);
-      if(Math.abs(v-target)<=ZONE)put(y,left+i,"▒","good bold");
-      else put(y,left+i,"─","dim");
+    canvasMode();
+    const t=performance.now()/1000;
+    ctx.fillStyle=NIGHT;ctx.fillRect(0,0,CW,CH);
+    drawCrowd(t);
+    for(let y=94,i=0;y<CH;y+=46,i++){ctx.fillStyle=i%2?FIELD_A:FIELD_B;ctx.fillRect(0,y,CW,46);}
+    atext("TRAINING: "+statName.toUpperCase(),CW/2,44,26,"#d98fe8");
+    atext("[SPACE] between the cones!",CW/2,74,16,"#5fd7d7");
+    ctx.fillStyle="rgba(255,255,255,.16)";ctx.fillRect(x0-20,ty-6,x1-x0+40,34);
+    const zx0=x0+(target-ZONE)/100*(x1-x0),zx1=x0+(target+ZONE)/100*(x1-x0);
+    ctx.fillStyle="rgba(78,201,106,.5)";ctx.fillRect(zx0,ty-6,zx1-zx0,34);
+    for(const cx of[zx0,zx1]){
+      ctx.fillStyle="#e07b28";
+      ctx.beginPath();ctx.moveTo(cx,ty-26);ctx.lineTo(cx-9,ty-4);ctx.lineTo(cx+9,ty-4);ctx.closePath();ctx.fill();
     }
-    put(y-1,left+Math.round(osc.value/100*(barW-1)),"▼","warn bold");
-    render();
+    const rx=x0+osc.value/100*(x1-x0);
+    drawPlayerSprite(rx,ty+16,5.4,MY_KIT,Math.floor(t*10)%2,osc.dir);
+    ctx.fillStyle="#fff";
+    ctx.beginPath();ctx.moveTo(rx,ty-96);ctx.lineTo(rx-8,ty-110);ctx.lineTo(rx+8,ty-110);ctx.closePath();ctx.fill();
   }
   await frameLoop((dt,keys)=>{osc.adv(dt);draw();return keys.includes(" ");});
   const gain=judgeTraining(osc.value,target);
-  const msg=[["Sloppy session. No improvement.","bad bold"],
-    ["Scrappy, but something stuck.","warn bold"],
-    ["Nice work. Solid session.","good bold"],
-    ["PERFECT REP! Massive gains!","good bold"]][gain];
-  await flash(msg[0],msg[1]);
+  const msg=[["Sloppy session. No gains.","#ff5f5f"],
+    ["Scrappy, but something stuck. +1","#e0a83c"],
+    ["Solid session! +2","#4ec96a"],
+    ["PERFECT REP! +3","#4ec96a"]][gain];
+  await canvasBanner(msg[0],msg[1]);
   return gain;
 }
 /* ================= match engine ================= */
 const MOMENT_INTROS={
   breakaway:"The defence splinters — YOU'RE THROUGH THE GAP!",
-  pass:"Overlap on! You're at first receiver with numbers out wide...",
-  bomb:"Last tackle. The coach wants the bomb — put it up!",
-  penalty_kick:"Penalty in front! You're taking the two."
+  pass:"Overlap on! Numbers out wide...",
+  bomb:"Last tackle. Put the bomb up!",
+  penalty_kick:"Penalty in front! Take the two."
 };
+async function momentSplash(kind){
+  canvasMode();
+  const t=performance.now()/1000;
+  ctx.fillStyle=NIGHT;ctx.fillRect(0,0,CW,CH);
+  drawCrowd(t);
+  for(let y=94,i=0;y<CH;y+=46,i++){ctx.fillStyle=i%2?FIELD_A:FIELD_B;ctx.fillRect(0,y,CW,46);}
+  if(kind==="bomb"||kind==="penalty_kick")drawPosts(CW/2,300);
+  drawPlayerSprite(CW/2-170,470,9,MY_KIT,0,1);
+  drawPlayerSprite(CW/2+170,470,9,OPP_KIT,1,-1);
+  drawBall(CW/2,400,1.6,-.5);
+  atext("*  PLAYER MOMENT  *",CW/2,170,42,"#d98fe8");
+  atext(MOMENT_INTROS[kind],CW/2,228,20,"#e0a83c");
+  atext("Get ready...",CW/2,540,15,"#8b98a5");
+  await sleep(1500);
+}
 function pickMoments(p){
   const n=randint(3,5);
   const kinds=["breakaway","pass","bomb","penalty_kick"];
@@ -443,12 +615,7 @@ async function conversion(out){
 async function runMoment(kind,out){
   const p=state.player;
   out.momTot++;
-  clear();
-  center(10,"*  PLAYER MOMENT  *","accent bold blink");
-  center(13,MOMENT_INTROS[kind],"warn bold");
-  center(16,"Get ready...","dim");
-  render();
-  await sleep(1500);
+  await momentSplash(kind);
   if(kind==="breakaway"){
     if(await playBreakaway(effective(p.speed,p.energy))){
       out.my+=4;out.tries++;out.momWon++;p.seasonTries++;
@@ -715,30 +882,33 @@ async function careerLoop(){
   }
 }
 /* ================= title & main ================= */
-const BANNER=[
-"███╗   ██╗██████╗ ██╗     ",
-"████╗  ██║██╔══██╗██║     ",
-"██╔██╗ ██║██████╔╝██║     ",
-"██║╚██╗██║██╔══██╗██║     ",
-"██║ ╚████║██║  ██║███████╗",
-"╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"];
 async function titleScreen(){
-  let name="";
-  while(true){
-    clear();
-    BANNER.forEach((l,i)=>center(4+i,l,"title bold"));
-    center(12,"C A R E E R   S I M U L A T O R","accent bold");
-    center(15,"From park footy to Immortal. One bar-fill at a time.","dim");
-    center(19,"Enter your name:","bold");
-    center(21,"  "+(name||" ")+"█  ","warn bold");
-    center(25,"[Enter] start career"+(name.trim()?"":" as 'Rookie'"),"good");
-    center(27,"Keyboard required · Space locks the bars · Arrows dodge · q backs out","dim");
-    render();
-    const k=await waitKey();
-    if(k==="Enter")return name.trim()||"Rookie";
-    if(k==="Backspace")name=name.slice(0,-1);
-    else if(k.length===1&&/[a-zA-Z '\-]/.test(k)&&name.length<14)name+=k;
-  }
+  let name="",done=false;
+  await frameLoop((dt,keys)=>{
+    for(const k of keys){
+      if(k==="Enter")done=true;
+      else if(k==="Backspace")name=name.slice(0,-1);
+      else if(k.length===1&&/[a-zA-Z '\-]/.test(k)&&name.length<14)name+=k;
+    }
+    canvasMode();
+    const t=performance.now()/1000;
+    ctx.fillStyle=NIGHT;ctx.fillRect(0,0,CW,CH);
+    drawCrowd(t);
+    for(let y=94,i=0;y<CH;y+=46,i++){ctx.fillStyle=i%2?FIELD_A:FIELD_B;ctx.fillRect(0,y,CW,46);}
+    drawPosts(CW/2,300);
+    drawPlayerSprite(CW/2-190,500,8,MY_KIT,Math.floor(t*6)%2,1);
+    drawPlayerSprite(CW/2+190,500,8,OPP_KIT,1-Math.floor(t*6)%2,-1);
+    drawBall(CW/2,455,1.6,-.5);
+    atext("N R L",CW/2,150,64,"#5fd7d7");
+    atext("CAREER SIMULATOR",CW/2,205,30,"#d98fe8");
+    atext("From park footy to Immortal.",CW/2,246,15,"#8b98a5");
+    atext("Enter your name:",CW/2,330,18,"#c8d2dc");
+    atext((name||"_")+"█",CW/2,364,24,"#e0a83c");
+    atext("[Enter] start career"+(name.trim()?"":" as 'Rookie'"),CW/2,420,16,"#4ec96a");
+    atext("Keyboard required · Space locks the bars · Arrows dodge · q backs out",CW/2,560,13,"#8b98a5");
+    return done;
+  });
+  return name.trim()||"Rookie";
 }
 async function gameOver(){
   const p=state.player;

@@ -11,8 +11,10 @@ NRL season with a live 17-team ladder.
 ## Play in the browser
 
 Open `index.html` in any browser — the entire game (all mini-games, the full
-27-round season, and the management loop) is ported to a single dependency-free
-HTML file with a CRT-terminal look. Keyboard required.
+27-round season, and the management loop) in a single dependency-free HTML
+file. Menus and the match ticker keep the CRT-terminal look; the mini-games
+render as arcade scenes on canvas: pixel-sprite players, a striped night-game
+field, crowd, goal posts, and animated ball flight. Keyboard required.
 
 ## Run in the terminal
 
